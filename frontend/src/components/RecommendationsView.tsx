@@ -7,9 +7,7 @@ import {
   Clock,
   CheckCircle,
   XCircle,
-  Truck,
   RotateCw,
-  AlertCircle,
   Bot,
 } from 'lucide-react';
 
@@ -194,7 +192,6 @@ export const RecommendationsView: React.FC<RecommendationsViewProps> = ({
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           {filteredRecs.map((rec) => {
             const isProposed = rec.status === 'proposed';
-            const isApproved = rec.status === 'approved';
             const isLoading = loadingId === rec.recommendation_id;
 
             return (
@@ -361,7 +358,7 @@ export const RecommendationsView: React.FC<RecommendationsViewProps> = ({
                     >
                       GEMINI AI CLINICAL RATIONALE & SAFETY VALIDATION
                     </div>
-                    <div style={{ fontSize: '0.85rem', color: '#e2e8f0', lineHeight: 1.5 }}>
+                    <div style={{ fontSize: '0.85rem', color: '#e2e8f0', lineHeight: 1.6, whiteSpace: 'pre-line' }}>
                       {rec.explanation || (
                         <span>
                           Transfer recommendation created to prevent impending depletion at{' '}

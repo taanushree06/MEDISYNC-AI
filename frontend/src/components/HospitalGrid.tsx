@@ -4,7 +4,6 @@ import {
   TrendingDown,
   TrendingUp,
   Minus,
-  AlertTriangle,
   Zap,
   MapPin,
   Clock,
@@ -233,7 +232,7 @@ export const HospitalGrid: React.FC<HospitalGridProps> = ({
                     <Clock size={13} />
                     {h.hours_to_shortage !== null
                       ? `${h.hours_to_shortage.toFixed(1)} hrs`
-                      : '> 24 hrs'}
+                      : 'Awaiting forecast'}
                   </div>
                 </div>
               </div>

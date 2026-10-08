@@ -15,9 +15,23 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
 export const api = axios.create({
   baseURL: API_BASE,
+  timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
   },
+});
+
+api.interceptors.request.use(config => {
+  const token = sessionStorage.getItem('medisync_operator_token');
+  if (token) config.headers.set('X-Operator-Token', token);
+  return config;
+});
+
+api.interceptors.response.use(response => response, error => {
+  if (error.response?.status === 403) {
+    return Promise.reject(new Error('Operator access required. Enter your token using Operator access.'));
+  }
+  return Promise.reject(error);
 });
 
 export const getHospitals = async (): Promise<Hospital[]> => {
@@ -126,7 +140,16 @@ export const getEvents = async (limit = 50): Promise<SimulationEvent[]> => {
   return res.data;
 };
 
-export const checkHealth = async (): Promise<{ status: string; mongodb: boolean; simulation_running: boolean }> => {
+export interface BackendHealth {
+  status: string;
+  mongodb: boolean;
+  persistent: boolean;
+  storage_mode: 'mongodb' | 'mongomock' | 'unavailable';
+  simulation_running: boolean;
+  operator_auth_required?: boolean;
+}
+
+export const checkHealth = async (): Promise<BackendHealth> => {
   const res = await api.get('/api/health');
   return res.data;
 };

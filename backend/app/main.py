@@ -8,9 +8,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core import settings
-from app.db import check_connection, ensure_indexes, close_connection
+from app.db import get_client, get_storage_status, ensure_indexes, close_connection
 from app.api import router
 from app.simulation import get_simulator
+from app.web import mount_frontend
 
 # Configure logging
 logging.basicConfig(
@@ -26,27 +27,24 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("🏥 MediSync AI starting up...")
     logger.info(f"Environment: {settings.app_env}")
-    logger.info(f"MongoDB: {settings.mongodb_uri}")
-
-    if check_connection():
-        logger.info("✅ MongoDB connected")
+    if settings.app_env != "development" and (
+        not settings.demo_operator_token or settings.demo_operator_token == "medisync-demo-2024"
+    ):
+        raise RuntimeError("Set a private DEMO_OPERATOR_TOKEN before starting a production backend.")
+    try:
+        get_client()
+        storage = get_storage_status()
+        logger.info("Storage mode: %s | persistent: %s", storage["storage_mode"], storage["persistent"])
         ensure_indexes()
-        # Seed hospitals on startup
         sim = get_simulator()
         sim.seed_hospitals()
-        logger.info("✅ Demo hospitals seeded")
-    else:
-        logger.warning("⚠️ MongoDB not available — some features will be limited")
-
-    yield
-
-    # Shutdown
-    logger.info("🏥 MediSync AI shutting down...")
-    sim = get_simulator()
-    if sim.running:
-        await sim.reset()
-    close_connection()
-    logger.info("✅ Shutdown complete")
+        logger.info("Demo hospitals ensured; existing inventory preserved")
+        yield
+    finally:
+        logger.info("MediSync AI shutting down; preserving database records")
+        await get_simulator().stop()
+        close_connection()
+        logger.info("Shutdown complete")
 
 
 # Create FastAPI app
@@ -74,12 +72,15 @@ app.add_middleware(
 app.include_router(router)
 
 
-@app.get("/")
-async def root():
-    return {
-        "name": "MediSync AI",
-        "version": "1.0.0",
-        "description": "Cross-Hospital Resource Rebalancing System (SIMULATED)",
-        "docs": "/docs",
-        "health": "/api/health",
-    }
+if settings.frontend_dist:
+    mount_frontend(app, settings.frontend_dist)
+else:
+    @app.get("/")
+    async def root():
+        return {
+            "name": "MediSync AI",
+            "version": "1.0.0",
+            "description": "Cross-Hospital Resource Rebalancing System (SIMULATED)",
+            "docs": "/docs",
+            "health": "/api/health",
+        }

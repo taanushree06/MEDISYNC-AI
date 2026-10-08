@@ -1,0 +1,17 @@
+.git
+**/.venv
+**/venv
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+**/__pycache__
+**/.pytest_cache
+**/*.pyc
+**/*.log
+backend/.runtime
+backend/backups
+backend/tests
+backend/VERIFICATION.md
+**/.DS_Store
+**/Thumbs.db

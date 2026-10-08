@@ -8,7 +8,10 @@ from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query, Header
 from pydantic import BaseModel
-from app.db import get_database, check_connection
+from app.db import get_database, get_storage_status
+from pathlib import Path
+import hashlib
+import hmac
 from app.schemas import (
     HealthResponse, HospitalResponse, SimulationStatus,
     AnalyticsResponse, PredictionResponse, RecommendationResponse,
@@ -36,7 +39,7 @@ def verify_operator(token: Optional[str] = None):
     """Simple demo operator auth. In production, use proper auth."""
     if settings.app_env == "development":
         return True
-    if not token or token != settings.demo_operator_token:
+    if not token or not hmac.compare_digest(token.encode(), settings.demo_operator_token.encode()):
         raise HTTPException(status_code=403, detail="Invalid operator token")
     return True
 
@@ -45,9 +48,12 @@ def verify_operator(token: Optional[str] = None):
 @router.get("/api/health", response_model=HealthResponse)
 async def health():
     sim = get_simulator()
+    storage = get_storage_status()
     return HealthResponse(
-        status="ok",
-        mongodb=check_connection(),
+        status="ok" if storage["persistent"] else "degraded",
+        **storage,
+        backend_instance=hashlib.sha256(str(Path(__file__).resolve().parents[2]).encode()).hexdigest()[:16],
+        operator_auth_required=settings.app_env != "development",
         simulation_running=sim.running,
         version="1.0.0",
     )
@@ -307,7 +313,7 @@ async def get_analytics():
             "current_stock": round(h["current_stock"], 1),
             "safety_stock": safety,
             "consumption_rate": h["consumption_rate"],
-            "hours_to_shortage": round(hours, 1) if hours else None,
+            "hours_to_shortage": round(hours, 1) if hours is not None else None,
             "status": "critical" if h["current_stock"] <= safety * 0.5
                      else "warning" if h["current_stock"] <= safety * 1.2
                      else "normal",
@@ -456,13 +462,49 @@ async def simulation_emergency(
     }
 
 
-# ─── Recent Events ───────────────────────────────────────────────────
+# ─── Recent Events & Audit Ledger ────────────────────────────────────
 @router.get("/api/v1/events")
-async def get_events(limit: int = Query(default=20, le=100)):
+async def get_events(limit: int = Query(default=50, le=200)):
     db = get_database()
     events = list(db.simulation_events.find().sort("timestamp", -1).limit(limit))
+    hospital_map = {h["hospital_id"]: h["name"] for h in db.hospitals.find()}
+
     for e in events:
         e.pop("_id", None)
+        hid = e.get("hospital_id", "")
+        if not e.get("hospital_name"):
+            e["hospital_name"] = hospital_map.get(hid, "Regional Network") if hid else "Regional Network"
+
+        # Ensure details has readable message
+        details = e.get("details", {})
+        if not details or not isinstance(details, dict):
+            details = {}
+
+        if not details.get("message"):
+            pc = e.get("parameter_changes", {})
+            evt_type = e.get("event_type", "")
+            if evt_type == "emergency_surge":
+                details["message"] = f"CRISIS SURGE: {e['hospital_name']} demand spiked to {pc.get('new_rate', 0)} cyl/hr."
+            elif evt_type == "simulation_started":
+                details["message"] = "Simulation initialized. Real-time telemetry consumption active."
+            elif evt_type == "simulation_paused":
+                details["message"] = "Simulation paused by operator."
+            elif evt_type == "simulation_resumed":
+                details["message"] = "Simulation resumed."
+            elif evt_type == "simulation_reset":
+                details["message"] = "Simulation reset to baseline state. Stock inventory replenished."
+            elif evt_type == "return_normal":
+                details["message"] = f"Consumption normalized to {pc.get('restored_rate', 0)} cyl/hr."
+            else:
+                details["message"] = f"System operational checkpoint: {evt_type} recorded."
+        e["details"] = details
+
+        # Ensure ledger_hash exists
+        if not e.get("ledger_hash"):
+            import hashlib
+            raw = f"{e.get('event_id')}:{e.get('timestamp')}:{e.get('event_type')}:{e['hospital_name']}"
+            e["ledger_hash"] = hashlib.sha256(raw.encode()).hexdigest()
+
     return events
 
 

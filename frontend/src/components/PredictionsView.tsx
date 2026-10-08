@@ -1,14 +1,6 @@
 import React, { useState } from 'react';
 import { Prediction } from '../types';
-import {
-  TrendingDown,
-  AlertTriangle,
-  CheckCircle,
-  Cpu,
-  Clock,
-  Layers,
-  Info,
-} from 'lucide-react';
+import { Cpu, Info, Clock } from 'lucide-react';
 import {
   LineChart,
   Line,
@@ -35,7 +27,7 @@ export const PredictionsView: React.FC<PredictionsViewProps> = ({ predictions })
   // Prepare chart data from forecast_points
   const chartData = selectedPrediction?.forecast_points?.map((pt) => ({
     hour: `+${pt.hours_ahead}h`,
-    stock: Math.round(pt.projected_stock),
+    stock: Math.round(pt.predicted_stock),
     safety: selectedPrediction.safety_stock,
   })) || [];
 
@@ -84,7 +76,7 @@ export const PredictionsView: React.FC<PredictionsViewProps> = ({ predictions })
       </div>
 
       {/* Main Split: Left Selector & Summary, Right Chart */}
-      <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: '1.5rem' }}>
+      <div className="forecast-layout">
         {/* Hospital Selector List */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <h3 style={{ fontSize: '0.9rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -248,7 +240,7 @@ export const PredictionsView: React.FC<PredictionsViewProps> = ({ predictions })
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(3, 1fr)',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
                 gap: '1rem',
                 marginTop: '1.25rem',
                 paddingTop: '1rem',
@@ -267,14 +259,14 @@ export const PredictionsView: React.FC<PredictionsViewProps> = ({ predictions })
                 <div
                   style={{
                     color:
-                      selectedPrediction.hours_to_shortage && selectedPrediction.hours_to_shortage < 3
+                      selectedPrediction.hours_to_shortage !== null && selectedPrediction.hours_to_shortage < 3
                         ? '#fb7185'
                         : '#34d399',
                     fontWeight: 700,
                     marginTop: '0.15rem',
                   }}
                 >
-                  {selectedPrediction.hours_to_shortage
+                  {selectedPrediction.hours_to_shortage !== null
                     ? `In ${selectedPrediction.hours_to_shortage.toFixed(1)} simulated hours`
                     : 'Safe buffer maintained'}
                 </div>

@@ -13,15 +13,17 @@ export const MetricCards: React.FC<MetricCardsProps> = ({ analytics }) => {
   const activeTransfers = analytics?.total_transfers_active ?? 0;
   const completedTransfers = analytics?.total_transfers_completed ?? 0;
   const predictedShortages = analytics?.predicted_shortages ?? 0;
-  const accuracy = analytics?.evaluation
+  const accuracy = analytics?.evaluation?.shortage_detection_accuracy != null
     ? `${(analytics.evaluation.shortage_detection_accuracy * 100).toFixed(1)}%`
-    : '98.4%';
+    : analytics?.evaluation?.mae != null
+    ? `MAE ${analytics.evaluation.mae.toFixed(1)}`
+    : 'Awaiting evaluation';
 
   const cards = [
     {
       title: 'NETWORK RESERVE',
       value: `${totalStock} Cylinders`,
-      subtext: `Across 6 Metropolitan Facilities`,
+      subtext: `Across ${analytics?.total_hospitals ?? '—'} metropolitan facilities`,
       icon: Package,
       color: '#06b6d4',
       glow: 'glow-teal',
@@ -37,7 +39,7 @@ export const MetricCards: React.FC<MetricCardsProps> = ({ analytics }) => {
     {
       title: 'PREDICTED SHORTAGES (<8H)',
       value: `${predictedShortages} Forecasted`,
-      subtext: `ML early-warning horizon`,
+      subtext: `ML early-warning • ${accuracy} benchmark`,
       icon: Cpu,
       color: predictedShortages > 0 ? '#f59e0b' : '#34d399',
       glow: predictedShortages > 0 ? 'glow-amber' : '',
@@ -45,7 +47,7 @@ export const MetricCards: React.FC<MetricCardsProps> = ({ analytics }) => {
     {
       title: 'AI REBALANCE RECOMMENDATIONS',
       value: `${activeRecs} Pending`,
-      subtext: `Gemini-validated transfers`,
+      subtext: `Safety-checked resource transfers`,
       icon: Sparkles,
       color: '#8b5cf6',
       glow: activeRecs > 0 ? 'glow-purple' : '',

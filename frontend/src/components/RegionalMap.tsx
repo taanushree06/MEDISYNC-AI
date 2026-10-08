@@ -1,15 +1,6 @@
 import React, { useState } from 'react';
 import { Hospital, Transfer, Recommendation } from '../types';
-import {
-  MapPin,
-  Truck,
-  Shield,
-  Zap,
-  Clock,
-  ArrowRight,
-  Activity,
-  Layers,
-} from 'lucide-react';
+import { Zap, Layers } from 'lucide-react';
 
 interface RegionalMapProps {
   hospitals: Hospital[];

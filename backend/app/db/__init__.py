@@ -6,7 +6,7 @@ Provides singleton database client and collection accessors.
 import logging
 from pymongo import MongoClient, ASCENDING, DESCENDING
 from pymongo.database import Database
-from pymongo.errors import ConnectionFailure
+from pymongo.errors import PyMongoError
 from app.core import settings
 
 logger = logging.getLogger(__name__)
@@ -17,31 +17,32 @@ _is_mock: bool = False
 
 
 def get_client() -> MongoClient:
-    """Get or create the MongoDB client singleton (with automatic in-memory mock fallback)."""
+    """Connect to persistent MongoDB; mock storage requires explicit opt-in."""
     global _client, _is_mock
     if _client is None:
+        client = None
         try:
             client = MongoClient(
                 settings.mongodb_uri,
-                serverSelectionTimeoutMS=1500,
-                connectTimeoutMS=1500,
+                serverSelectionTimeoutMS=settings.mongodb_timeout_ms,
+                connectTimeoutMS=settings.mongodb_timeout_ms,
+                socketTimeoutMS=settings.mongodb_timeout_ms,
             )
             # Test ping
             client.admin.command("ping")
             _client = client
             _is_mock = False
-            logger.info("Connected to MongoDB at %s", settings.mongodb_uri)
-        except Exception as e:
-            logger.warning("MongoDB not available (%s). Initializing in-memory mock database for demo.", e)
-            try:
-                import mongomock
-                _client = mongomock.MongoClient()
-                _is_mock = True
-                logger.info("✅ In-memory mongomock database initialized successfully.")
-            except ImportError:
-                # If mongomock is somehow missing, fall back to default client
-                _client = MongoClient(settings.mongodb_uri)
-                _is_mock = False
+            logger.info("Storage: real MongoDB connected; database=%s; persistent=true", settings.mongodb_database)
+        except PyMongoError as e:
+            if client is not None:
+                client.close()
+            logger.error("Persistent MongoDB unavailable (%s). Check the MongoDB service and MONGODB_URI.", type(e).__name__)
+            if not settings.mongodb_allow_mock:
+                raise RuntimeError("Persistent MongoDB connection failed. Start MongoDB or configure MONGODB_URI. Demo fallback requires MONGODB_ALLOW_MOCK=true.") from e
+            import mongomock
+            _client = mongomock.MongoClient()
+            _is_mock = True
+            logger.warning("Storage: IN-MEMORY MONGOMOCK; persistent=false; data is lost when this process exits. Real MongoDB is NOT connected.")
     return _client
 
 
@@ -54,25 +55,27 @@ def get_database() -> Database:
 
 
 def check_connection() -> bool:
-    """Check if MongoDB or mock database is reachable."""
-    global _is_mock
-    if _is_mock:
-        return True
+    """True only when a real, persistent MongoDB connection is reachable."""
     try:
         get_client().admin.command("ping")
-        return True
-    except ConnectionFailure:
-        logger.error("MongoDB connection failed")
+        return not _is_mock
+    except (PyMongoError, RuntimeError):
         return False
+
+
+def get_storage_status() -> dict:
+    persistent = check_connection()
+    return {"mongodb": persistent, "storage_mode": "mongomock" if _is_mock else "mongodb" if persistent else "unavailable", "persistent": persistent}
 
 
 def close_connection():
     """Close the MongoDB connection."""
-    global _client, _db
-    if _client:
+    global _client, _db, _is_mock
+    if _client is not None:
         _client.close()
         _client = None
         _db = None
+    _is_mock = False
 
 
 def ensure_indexes():

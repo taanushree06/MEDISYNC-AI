@@ -30,3 +30,7 @@ Thumbs.db
 
 # Log files
 *.log
+
+# Local MongoDB binaries, persistent database, and safety backups
+backend/.runtime/
+backend/backups/

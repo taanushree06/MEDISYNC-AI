@@ -6,7 +6,6 @@ import {
   Cpu,
   Target,
   Zap,
-  ShieldCheck,
   TrendingUp,
 } from 'lucide-react';
 
@@ -15,21 +14,23 @@ interface EvaluationViewProps {
 }
 
 export const EvaluationView: React.FC<EvaluationViewProps> = ({ evaluation }) => {
-  const mae = evaluation?.mae ? evaluation.mae.toFixed(2) : '1.42';
-  const rmse = evaluation?.rmse ? evaluation.rmse.toFixed(2) : '2.15';
-  const accuracy = evaluation?.shortage_detection_accuracy
+  const mae = evaluation?.mae != null ? evaluation.mae.toFixed(2) : '—';
+  const rmse = evaluation?.rmse != null ? evaluation.rmse.toFixed(2) : '—';
+  const accuracy = evaluation?.shortage_detection_accuracy != null
     ? (evaluation.shortage_detection_accuracy * 100).toFixed(1)
-    : '98.5';
-  const leadTime = evaluation?.lead_time_hours_avg
+    : '—';
+  const leadTime = evaluation?.lead_time_hours_avg != null
     ? evaluation.lead_time_hours_avg.toFixed(1)
-    : '4.8';
-  const samples = evaluation?.sample_size || 184;
+    : '—';
+  const samples = evaluation?.sample_count ?? 0;
+  const modelVersion = evaluation?.model_version || 'linear-depletion-v1';
+  const hasRealData = evaluation != null && samples > 0;
 
   const metrics = [
     {
       label: 'SHORTAGE DETECTION RECALL',
       value: `${accuracy}%`,
-      sub: 'Zero false negative life-critical breaches',
+      sub: 'Shown when measured by the backend',
       icon: Target,
       color: '#10b981',
     },
@@ -94,8 +95,30 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({ evaluation }) =>
           </div>
         </div>
 
-        <div style={{ color: '#94a3b8', fontSize: '0.8rem' }}>
-          Validated over <strong style={{ color: '#fff' }}>{samples}</strong> test points
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem' }}>
+          <div style={{ color: '#94a3b8', fontSize: '0.8rem' }}>
+            Validated over <strong style={{ color: '#fff' }}>{samples}</strong> test points
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.7rem' }}>
+            <span
+              className="badge"
+              style={{
+                background: 'rgba(6, 182, 212, 0.15)',
+                color: '#06b6d4',
+              }}
+            >
+              {modelVersion}
+            </span>
+            <span
+              className="badge"
+              style={{
+                background: hasRealData ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                color: hasRealData ? '#34d399' : '#fbbf24',
+              }}
+            >
+              {hasRealData ? '● Live Evaluation' : '○ Awaiting simulation data'}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -141,14 +164,14 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({ evaluation }) =>
       </div>
 
       {/* Methodology and Confusion Matrix breakdown */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+      <div className="grid-cols-2">
         {/* Confusion Matrix Card */}
         <div className="glass-panel" style={{ padding: '1.5rem' }}>
           <h3 style={{ fontSize: '1.05rem', color: '#fff', marginBottom: '0.4rem' }}>
-            Critical Shortage Confusion Matrix
+            Shortage Classification Evaluation
           </h3>
           <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '1.25rem' }}>
-            Evaluation of binary shortage early-warning trigger (&lt; 4 hours buffer)
+            Classification counts are not provided by the current backend. These metrics remain unmeasured.
           </p>
 
           <div
@@ -171,7 +194,7 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({ evaluation }) =>
                 TRUE POSITIVE
               </div>
               <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#fff', margin: '0.25rem 0' }}>
-                98.2%
+                —
               </div>
               <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
                 Shortages caught in advance
@@ -190,7 +213,7 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({ evaluation }) =>
                 TRUE NEGATIVE
               </div>
               <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#fff', margin: '0.25rem 0' }}>
-                99.1%
+                —
               </div>
               <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
                 Normal hospitals not disturbed
@@ -209,7 +232,7 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({ evaluation }) =>
                 FALSE POSITIVE
               </div>
               <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#fff', margin: '0.25rem 0' }}>
-                0.9%
+                —
               </div>
               <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
                 Over-cautious alerts (benign)
@@ -228,10 +251,10 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({ evaluation }) =>
                 FALSE NEGATIVE
               </div>
               <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#fff', margin: '0.25rem 0' }}>
-                0.0%
+                —
               </div>
               <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
-                Zero missed critical shortages
+                Missed shortage alerts
               </div>
             </div>
           </div>
@@ -240,7 +263,7 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({ evaluation }) =>
         {/* Algorithm Architecture Description */}
         <div className="glass-panel" style={{ padding: '1.5rem' }}>
           <h3 style={{ fontSize: '1.05rem', color: '#fff', marginBottom: '0.4rem' }}>
-            Model Architecture & Safety Guarantees
+            Model Architecture & Safety Checks
           </h3>
           <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '1rem' }}>
             Multi-tiered hybrid forecasting and donor optimization architecture
@@ -251,7 +274,7 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({ evaluation }) =>
               <CheckCircle2 size={16} color="#06b6d4" style={{ flexShrink: 0, marginTop: '2px' }} />
               <div>
                 <strong style={{ color: '#fff' }}>Sliding Window Linear Regression:</strong> Computes
-                the continuous rate of cylinder depletion using the last 5-10 time checkpoints.
+                the continuous rate of cylinder depletion using up to 20 recent time checkpoints.
               </div>
             </div>
 

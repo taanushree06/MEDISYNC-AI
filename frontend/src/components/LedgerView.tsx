@@ -1,14 +1,9 @@
 import React, { useState } from 'react';
 import { SimulationEvent } from '../types';
 import {
-  FileText,
   ShieldCheck,
   Search,
   Filter,
-  CheckCircle,
-  AlertTriangle,
-  Zap,
-  Truck,
   Hash,
 } from 'lucide-react';
 
@@ -26,7 +21,12 @@ export const LedgerView: React.FC<LedgerViewProps> = ({ events }) => {
       e.event_type.toLowerCase().includes(searchTerm.toLowerCase()) ||
       JSON.stringify(e.details).toLowerCase().includes(searchTerm.toLowerCase());
 
-    const matchesType = selectedType === 'all' || e.event_type === selectedType;
+    const matchesType =
+      selectedType === 'all' ||
+      e.event_type === selectedType ||
+      (selectedType === 'simulation_started' && (e.event_type === 'start' || e.event_type === 'simulation_started')) ||
+      (selectedType === 'simulation_paused' && (e.event_type === 'pause' || e.event_type === 'simulation_paused')) ||
+      (selectedType === 'simulation_reset' && (e.event_type === 'reset' || e.event_type === 'simulation_reset'));
 
     return matchesSearch && matchesType;
   });
@@ -43,7 +43,7 @@ export const LedgerView: React.FC<LedgerViewProps> = ({ events }) => {
         return <span className="badge badge-warning">📝 Transfer Approved</span>;
       case 'transfer_dispatched':
         return (
-          <span className="badge" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#38bdf8' }}>
+          <span className="badge" style={{ background: 'rgba(56, 189, 248, 0.15)', color: '#34d399' }}>
             🚚 Dispatched
           </span>
         );
@@ -51,8 +51,42 @@ export const LedgerView: React.FC<LedgerViewProps> = ({ events }) => {
         return <span className="badge badge-normal">✅ Delivery Confirmed</span>;
       case 'stock_replenished':
         return <span className="badge badge-normal">📦 Stock Restocked</span>;
+      case 'simulation_started':
+      case 'start':
+        return (
+          <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }}>
+            ▶️ Sim Started
+          </span>
+        );
+      case 'simulation_paused':
+      case 'pause':
+        return (
+          <span className="badge" style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24' }}>
+            ⏸️ Sim Paused
+          </span>
+        );
+      case 'simulation_resumed':
+      case 'resume':
+        return (
+          <span className="badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#34d399' }}>
+            ▶️ Sim Resumed
+          </span>
+        );
+      case 'simulation_reset':
+      case 'reset':
+        return (
+          <span className="badge" style={{ background: 'rgba(6, 182, 212, 0.15)', color: '#06b6d4' }}>
+            🔄 Sim Reset
+          </span>
+        );
+      case 'return_normal':
+        return <span className="badge badge-normal">✅ Rate Normalized</span>;
       default:
-        return <span className="badge badge-normal">Simulation Tick</span>;
+        return (
+          <span className="badge" style={{ background: 'rgba(148, 163, 184, 0.1)', color: '#94a3b8' }}>
+            📋 System Event
+          </span>
+        );
     }
   };
 
@@ -151,6 +185,10 @@ export const LedgerView: React.FC<LedgerViewProps> = ({ events }) => {
             <option value="transfer_approved" style={{ background: '#0d1322' }}>Transfer Approvals</option>
             <option value="transfer_dispatched" style={{ background: '#0d1322' }}>Fleet Dispatches</option>
             <option value="transfer_completed" style={{ background: '#0d1322' }}>Delivery Confirmations</option>
+            <option value="simulation_started" style={{ background: '#0d1322' }}>Simulation Start</option>
+            <option value="simulation_paused" style={{ background: '#0d1322' }}>Simulation Paused</option>
+            <option value="simulation_reset" style={{ background: '#0d1322' }}>Simulation Resets</option>
+            <option value="return_normal" style={{ background: '#0d1322' }}>Rate Normalizations</option>
           </select>
         </div>
       </div>

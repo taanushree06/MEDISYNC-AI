@@ -19,6 +19,7 @@ from app.core import settings
 from app.schemas import (
     Hospital, ResourceReading, SimulationEvent, SimulationStatus
 )
+from app.services.ledger_service import record_ledger_event
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +159,7 @@ class SimulationEngine:
         self._task: Optional[asyncio.Task] = None
         self._emergency_hospital_id: Optional[str] = None
         self._original_rates: Dict[str, float] = {}
+        self._notified_breaches: set = set()
         self._ws_clients: List = []
         self._loop_lock = asyncio.Lock() if False else None  # Set in async context
 
@@ -181,19 +183,19 @@ class SimulationEngine:
             self._ws_clients.remove(ws)
 
     # ─── Seed Data ────────────────────────────────────────────────────
-    def seed_hospitals(self):
-        """Insert or reset the six demo hospitals in MongoDB."""
+    def seed_hospitals(self, reset: bool = False):
+        """Insert missing hospitals; overwrite inventory only on explicit reset."""
         db = get_database()
         for h_data in SEED_HOSPITALS:
             h_data_copy = dict(h_data)
             h_data_copy["updated_at"] = datetime.utcnow()
             db.hospitals.update_one(
                 {"hospital_id": h_data_copy["hospital_id"]},
-                {"$set": h_data_copy},
+                {"$set" if reset else "$setOnInsert": h_data_copy},
                 upsert=True,
             )
             self._original_rates[h_data_copy["hospital_id"]] = h_data_copy["consumption_rate"]
-        logger.info("Seeded 6 demo hospitals")
+        logger.info("Ensured 6 demo hospitals (reset=%s)", reset)
 
     # ─── Status ───────────────────────────────────────────────────────
     def get_status(self) -> SimulationStatus:
@@ -221,12 +223,12 @@ class SimulationEngine:
         self.simulation_time = datetime.utcnow()
 
         # Record start event
-        db = get_database()
-        event = SimulationEvent(
+        record_ledger_event(
+            event_type="simulation_started",
+            hospital_name="Regional Command Center",
+            details={"message": "Simulation started. Real-time telemetry consumption active."},
             simulation_run_id=self.simulation_run_id,
-            event_type="start",
         )
-        db.simulation_events.insert_one(event.model_dump())
 
         # Start the tick loop
         self._task = asyncio.create_task(self._tick_loop())
@@ -235,29 +237,42 @@ class SimulationEngine:
 
     async def pause(self):
         self.paused = True
-        db = get_database()
-        event = SimulationEvent(
+        record_ledger_event(
+            event_type="simulation_paused",
+            hospital_name="Regional Command Center",
+            details={"message": "Simulation paused by operator."},
             simulation_run_id=self.simulation_run_id,
-            event_type="pause",
         )
-        db.simulation_events.insert_one(event.model_dump())
         return self.get_status()
 
     async def resume(self):
         self.paused = False
-        db = get_database()
-        event = SimulationEvent(
+        record_ledger_event(
+            event_type="simulation_resumed",
+            hospital_name="Regional Command Center",
+            details={"message": "Simulation resumed."},
             simulation_run_id=self.simulation_run_id,
-            event_type="resume",
         )
-        db.simulation_events.insert_one(event.model_dump())
         return self.get_status()
+
+    async def stop(self):
+        """Stop the tick loop without deleting data or changing inventory."""
+        self.running = False
+        self.paused = False
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        self._task = None
 
     async def reset(self):
         """Reset to deterministic initial demo state."""
         self.running = False
         self.paused = False
         self._emergency_hospital_id = None
+        self._notified_breaches.clear()
 
         if self._task and not self._task.done():
             self._task.cancel()
@@ -274,15 +289,16 @@ class SimulationEngine:
         db.transfers.delete_many({})
 
         # Re-seed hospitals
-        self.seed_hospitals()
+        self.seed_hospitals(reset=True)
 
         # Record reset event
         self.simulation_run_id = f"demo-run-{datetime.utcnow().strftime('%H%M%S')}"
-        event = SimulationEvent(
+        record_ledger_event(
+            event_type="simulation_reset",
+            hospital_name="Regional Command Center",
+            details={"message": "Simulation reset to baseline state. Stock inventory replenished across 6 facilities."},
             simulation_run_id=self.simulation_run_id,
-            event_type="reset",
         )
-        db.simulation_events.insert_one(event.model_dump())
 
         self.simulation_time = None
         self.real_start_time = None
@@ -309,17 +325,23 @@ class SimulationEngine:
         )
         self._emergency_hospital_id = hospital_id
 
-        event = SimulationEvent(
-            simulation_run_id=self.simulation_run_id,
-            hospital_id=hospital_id,
+        record_ledger_event(
             event_type="emergency_surge",
+            hospital_id=hospital_id,
+            hospital_name=hospital.get("name", hospital_id),
+            details={
+                "message": f"CRISIS DETECTED: {hospital.get('name')} experienced demand spike ({multiplier}x normal rate: {new_rate:.1f} cyl/hr).",
+                "original_rate": self._original_rates[hospital_id],
+                "new_rate": new_rate,
+                "multiplier": multiplier,
+            },
             parameter_changes={
                 "original_rate": self._original_rates[hospital_id],
                 "new_rate": new_rate,
                 "multiplier": multiplier,
             },
+            simulation_run_id=self.simulation_run_id,
         )
-        db.simulation_events.insert_one(event.model_dump())
         logger.info(f"Emergency surge at {hospital_id}: rate {new_rate}")
 
         await self.broadcast({
@@ -344,13 +366,16 @@ class SimulationEngine:
         if self._emergency_hospital_id == hospital_id:
             self._emergency_hospital_id = None
 
-        event = SimulationEvent(
-            simulation_run_id=self.simulation_run_id,
-            hospital_id=hospital_id,
+        h = db.hospitals.find_one({"hospital_id": hospital_id})
+        h_name = h.get("name", hospital_id) if h else hospital_id
+        record_ledger_event(
             event_type="return_normal",
+            hospital_id=hospital_id,
+            hospital_name=h_name,
+            details={"message": f"{h_name} consumption rate returned to baseline {original:.1f} cyl/hr."},
             parameter_changes={"restored_rate": original},
+            simulation_run_id=self.simulation_run_id,
         )
-        db.simulation_events.insert_one(event.model_dump())
         return self.get_status()
 
     # ─── Core Tick Loop ───────────────────────────────────────────────
@@ -419,6 +444,32 @@ class SimulationEngine:
                 status = "warning"
             else:
                 status = "normal"
+
+            # Check for threshold breach transitions
+            if status in ("critical", "warning") and h["hospital_id"] not in self._notified_breaches:
+                self._notified_breaches.add(h["hospital_id"])
+                record_ledger_event(
+                    event_type="threshold_breach",
+                    hospital_id=h["hospital_id"],
+                    hospital_name=h["name"],
+                    details={
+                        "message": f"SAFETY BUFFER BREACH: {h['name']} stock dropped to {new_stock:.1f} cyl (Safety threshold: {safety} cyl). Status: {status.upper()}.",
+                        "current_stock": round(new_stock, 1),
+                        "safety_stock": safety,
+                        "status": status,
+                    },
+                    simulation_run_id=self.simulation_run_id,
+                )
+                await self.broadcast({
+                    "type": "threshold_breach",
+                    "hospital_id": h["hospital_id"],
+                    "hospital_name": h["name"],
+                    "current_stock": round(new_stock, 1),
+                    "safety_stock": safety,
+                    "status": status,
+                })
+            elif status == "normal" and h["hospital_id"] in self._notified_breaches:
+                self._notified_breaches.discard(h["hospital_id"])
 
             update_payload.append({
                 "hospital_id": h["hospital_id"],

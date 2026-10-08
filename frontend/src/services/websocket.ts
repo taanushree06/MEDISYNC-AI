@@ -11,18 +11,26 @@ export const useMediSyncWebSocket = (onMessageReceived?: (msg: WSMessage) => voi
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const pingIntervalRef = useRef<number | null>(null);
+  const onMessageReceivedRef = useRef(onMessageReceived);
+  const connectRef = useRef<() => void>(() => {});
+  const activeRef = useRef(false);
+
+  useEffect(() => {
+    onMessageReceivedRef.current = onMessageReceived;
+  }, [onMessageReceived]);
 
   const connect = useCallback(() => {
+    if (!activeRef.current) return;
     // Determine ws url
-    const envWs = import.meta.env.VITE_WS_BASE_URL;
+    const envWs = import.meta.env.VITE_WS_BASE_URL || import.meta.env.VITE_API_BASE_URL;
     let wsUrl: string;
     if (envWs) {
-      wsUrl = `${envWs}/api/v1/ws/live`;
+      wsUrl = `${envWs.replace(/\/$/, '').replace(/^http/, 'ws')}/api/v1/ws/live`;
     } else {
       const loc = window.location;
       const protocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
       // In dev, if on 5173 with proxy:
-      wsUrl = `${protocol}//${loc.hostname}:8000/api/v1/ws/live`;
+      wsUrl = `${protocol}//${loc.host}/api/v1/ws/live`;
     }
 
     try {
@@ -44,8 +52,8 @@ export const useMediSyncWebSocket = (onMessageReceived?: (msg: WSMessage) => voi
         try {
           const data = JSON.parse(event.data);
           setLastMessage(data);
-          if (onMessageReceived) {
-            onMessageReceived(data);
+          if (onMessageReceivedRef.current) {
+            onMessageReceivedRef.current(data);
           }
         } catch {
           // Non-JSON message (e.g. pong)
@@ -53,12 +61,13 @@ export const useMediSyncWebSocket = (onMessageReceived?: (msg: WSMessage) => voi
       };
 
       socket.onclose = () => {
+        if (wsRef.current !== socket) return;
         setIsConnected(false);
         if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
         // Try reconnect in 3s
         if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = window.setTimeout(() => {
-          connect();
+        if (activeRef.current) reconnectTimeoutRef.current = window.setTimeout(() => {
+          connectRef.current();
         }, 3000);
       };
 
@@ -67,17 +76,27 @@ export const useMediSyncWebSocket = (onMessageReceived?: (msg: WSMessage) => voi
         socket.close();
       };
     } catch {
-      setIsConnected(false);
+      if (activeRef.current) reconnectTimeoutRef.current = window.setTimeout(() => connectRef.current(), 3000);
     }
-  }, [onMessageReceived]);
+  }, []);
 
   useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
+
+  useEffect(() => {
+    activeRef.current = true;
     connect();
     return () => {
+      activeRef.current = false;
       if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (wsRef.current) {
+        wsRef.current.onclose = null;
+        wsRef.current.onerror = null;
+        wsRef.current.onopen = null;
         wsRef.current.close();
+        wsRef.current = null;
       }
     };
   }, [connect]);

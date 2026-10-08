@@ -13,7 +13,6 @@ import {
   FileText,
   BarChart2,
   Clock,
-  ShieldCheck,
 } from 'lucide-react';
 import { SimulationStatus } from '../types';
 
@@ -42,7 +41,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenEmergencyModal,
   recommendationsCount,
 }) => {
-  const isRunning = status?.running ?? false;
+  const isRunning = (status?.running ?? false) && !status?.paused;
 
   const tabs = [
     { id: 'overview', label: 'Network Overview', icon: Activity },
@@ -62,7 +61,7 @@ export const Header: React.FC<HeaderProps> = ({
   const formatSimTime = (isoString?: string) => {
     if (!isoString) return '--:--';
     try {
-      const date = new Date(isoString);
+      const date = new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(isoString) ? isoString : `${isoString}Z`);
       return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     } catch {
       return '--:--';
@@ -89,7 +88,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Navigation Tabs */}
-        <nav className="nav-tabs">
+        <nav className="nav-tabs" aria-label="Dashboard views">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = currentTab === tab.id;
@@ -98,6 +97,7 @@ export const Header: React.FC<HeaderProps> = ({
                 key={tab.id}
                 className={`nav-tab-btn ${isActive ? 'active' : ''}`}
                 onClick={() => setCurrentTab(tab.id)}
+                aria-current={isActive ? 'page' : undefined}
               >
                 <Icon size={16} />
                 <span>{tab.label}</span>
@@ -126,7 +126,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="sim-capsule">
             <span className={`pulse-indicator ${isRunning ? 'active' : ''}`} />
             <span style={{ fontSize: '0.75rem', color: isRunning ? '#34d399' : '#94a3b8', fontWeight: 600 }}>
-              {isRunning ? 'SIM RUNNING' : 'SIM PAUSED'}
+              {isRunning ? 'SIM RUNNING' : status?.paused ? 'SIM PAUSED' : 'SIM IDLE'}
             </span>
             <div style={{ height: '14px', width: '1px', background: 'rgba(255,255,255,0.1)' }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>

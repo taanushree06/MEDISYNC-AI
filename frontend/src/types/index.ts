@@ -16,7 +16,7 @@ export interface Hospital {
 
 export interface ForecastPoint {
   hours_ahead: number;
-  projected_stock: number;
+  predicted_stock: number;
   timestamp: string;
 }
 
@@ -49,7 +49,7 @@ export interface Recommendation {
   destination_hospital_name: string;
   quantity: number;
   estimated_transport_minutes: number;
-  urgency: 'low' | 'medium' | 'high' | 'critical';
+  urgency: 'routine' | 'low' | 'medium' | 'high' | 'critical';
   score: number;
   status: 'proposed' | 'approved' | 'cancelled' | 'in_transit' | 'completed';
   explanation: string;
@@ -94,7 +94,7 @@ export interface SimulationEvent {
   event_id: string;
   simulation_run_id: string;
   timestamp: string;
-  event_type: 'tick' | 'threshold_breach' | 'emergency_surge' | 'recommendation_generated' | 'transfer_approved' | 'transfer_dispatched' | 'transfer_completed' | 'stock_replenished';
+  event_type: 'tick' | 'threshold_breach' | 'emergency_surge' | 'recommendation_generated' | 'transfer_approved' | 'transfer_dispatched' | 'transfer_completed' | 'stock_replenished' | 'simulation_started' | 'simulation_paused' | 'simulation_resumed' | 'simulation_reset' | 'return_normal' | string;
   hospital_id?: string;
   hospital_name?: string;
   details: Record<string, any>;
@@ -104,12 +104,14 @@ export interface SimulationEvent {
 export interface ModelEvaluation {
   evaluation_id: string;
   simulation_run_id: string;
+  model_version?: string;
   evaluation_timestamp: string;
   mae: number;
   rmse: number;
-  sample_size: number;
-  shortage_detection_accuracy: number;
-  lead_time_hours_avg: number;
+  sample_count: number;
+  shortage_detection_accuracy?: number;
+  lead_time_hours_avg?: number;
+  details?: Record<string, any>;
 }
 
 export interface Analytics {

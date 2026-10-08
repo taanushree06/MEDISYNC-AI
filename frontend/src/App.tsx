@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import {
   getHospitals,
   getPredictions,
@@ -17,6 +17,8 @@ import {
   cancelRecommendation,
   dispatchTransfer,
   completeTransfer,
+  checkHealth,
+  type BackendHealth,
 } from './services/api';
 import { useMediSyncWebSocket, WSMessage } from './services/websocket';
 import {
@@ -32,13 +34,14 @@ import { Header } from './components/Header';
 import { EmergencyModal } from './components/EmergencyModal';
 import { MetricCards } from './components/MetricCards';
 import { HospitalGrid } from './components/HospitalGrid';
-import { RegionalMap } from './components/RegionalMap';
-import { PredictionsView } from './components/PredictionsView';
 import { RecommendationsView } from './components/RecommendationsView';
 import { TransfersView } from './components/TransfersView';
 import { LedgerView } from './components/LedgerView';
 import { EvaluationView } from './components/EvaluationView';
 import { Activity, Bell, CheckCircle2, ShieldAlert } from 'lucide-react';
+
+const RegionalMap = lazy(() => import('./components/RegionalMap').then(module => ({ default: module.RegionalMap })));
+const PredictionsView = lazy(() => import('./components/PredictionsView').then(module => ({ default: module.PredictionsView })));
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<string>('overview');
@@ -51,46 +54,80 @@ export const App: React.FC = () => {
   const [simStatus, setSimStatus] = useState<SimulationStatus | null>(null);
   const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState<boolean>(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'alert' | 'info' } | null>(null);
+  const [backendHealth, setBackendHealth] = useState<BackendHealth | null>(null);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [operatorAccessOpen, setOperatorAccessOpen] = useState(false);
+  const [operatorToken, setOperatorToken] = useState('');
+  const fetchInFlight = useRef(false);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const showToast = (message: string, type: 'success' | 'alert' | 'info' = 'info') => {
+  const showToast = useCallback((message: string, type: 'success' | 'alert' | 'info' = 'info') => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast({ message, type });
-    setTimeout(() => {
+    toastTimer.current = setTimeout(() => {
       setToast(null);
     }, 4500);
-  };
+  }, []);
+
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
 
   // Master fetch function
   const fetchAllData = useCallback(async () => {
+    if (fetchInFlight.current) return;
+    fetchInFlight.current = true;
     try {
-      const [h, p, r, t, e, a, s] = await Promise.all([
-        getHospitals().catch(() => []),
-        getPredictions().catch(() => []),
-        getRecommendations().catch(() => []),
-        getTransfers().catch(() => []),
-        getEvents(40).catch(() => []),
-        getAnalytics().catch(() => null),
-        getSimulationStatus().catch(() => null),
+      const [h, p, r, t, e, a, s, health] = await Promise.allSettled([
+        getHospitals(), getPredictions(), getRecommendations(), getTransfers(),
+        getEvents(40), getAnalytics(), getSimulationStatus(), checkHealth(),
       ]);
-
-      if (h.length > 0) setHospitals(h);
-      if (p.length > 0) setPredictions(p);
-      setRecommendations(r);
-      setTransfers(t);
-      if (e.length > 0) setEvents(e);
-      if (a) setAnalytics(a);
-      if (s) setSimStatus(s);
-    } catch {
-      // Background retry handled by interval
+      if (h.status === 'fulfilled') setHospitals(h.value);
+      if (p.status === 'fulfilled') setPredictions(p.value);
+      if (r.status === 'fulfilled') setRecommendations(r.value);
+      if (t.status === 'fulfilled') setTransfers(t.value);
+      if (e.status === 'fulfilled') setEvents(e.value);
+      if (a.status === 'fulfilled') setAnalytics(a.value);
+      if (s.status === 'fulfilled') setSimStatus(s.value);
+      setBackendHealth(health.status === 'fulfilled' ? health.value : null);
+      const complete = [h, p, r, t, e, a, s, health].every(result => result.status === 'fulfilled');
+      setConnectionError(complete ? null : 'Some live data could not be refreshed. Showing the last available readings.');
+      if (complete) setLastUpdated(new Date());
+    } finally {
+      fetchInFlight.current = false;
+      setLoading(false);
     }
   }, []);
 
   // Real-time WebSocket handler
   const handleWsMessage = useCallback(
     (msg: WSMessage) => {
-      if (msg.type === 'tick') {
-        if (msg.hospitals) setHospitals(msg.hospitals);
-        if (msg.simulated_time && simStatus) {
-          setSimStatus((prev) => (prev ? { ...prev, simulated_time: msg.simulated_time, current_tick: msg.tick } : prev));
+      if (msg.type === 'stock_update') {
+        // Real-time stock telemetry from the simulation engine
+        if (msg.hospitals && Array.isArray(msg.hospitals)) {
+          setHospitals((prev) => {
+            // Merge live stock data into existing hospital objects
+            const map = new Map(prev.map((h) => [h.hospital_id, h]));
+            for (const upd of msg.hospitals) {
+              const existing = map.get(upd.hospital_id);
+              if (existing) {
+                map.set(upd.hospital_id, {
+                  ...existing,
+                  current_stock: upd.current_stock,
+                  consumption_rate: upd.consumption_rate,
+                  status: upd.status as any,
+                });
+              }
+            }
+            return Array.from(map.values());
+          });
+        }
+        if (msg.simulation_time) {
+          setSimStatus((prev) =>
+            prev ? { ...prev, simulated_time: msg.simulation_time } : prev
+          );
         }
       } else if (msg.type === 'threshold_breach') {
         showToast(
@@ -101,16 +138,20 @@ export const App: React.FC = () => {
       } else if (msg.type === 'emergency_surge') {
         showToast(`🚨 Surge Detected: ${msg.hospital_name} consumption spiked!`, 'alert');
         fetchAllData();
+      } else if (msg.type === 'simulation_reset') {
+        showToast('Simulation reset to baseline state.', 'info');
+        fetchAllData();
       } else if (
         msg.type === 'recommendation_generated' ||
         msg.type === 'transfer_approved' ||
         msg.type === 'transfer_dispatched' ||
-        msg.type === 'transfer_completed'
+        msg.type === 'transfer_completed' ||
+        msg.type === 'emergency_update'
       ) {
         fetchAllData();
       }
     },
-    [fetchAllData, simStatus]
+    [fetchAllData, showToast]
   );
 
   const { isConnected: isWsConnected } = useMediSyncWebSocket(handleWsMessage);
@@ -277,6 +318,32 @@ export const App: React.FC = () => {
 
       {/* Main Content Area */}
       <main className="main-content">
+        <section className="command-hero" aria-label="Network command center">
+          <div className="hero-copy">
+            <span className="hero-eyebrow"><Activity size={14} /> REGIONAL COMMAND CENTER <span className="demo-label">SIMULATED</span></span>
+            <h2>Every hospital.<br /><span>One connected network.</span></h2>
+            <p>Anticipate oxygen shortages. Coordinate resources. Keep your network one step ahead.</p>
+            <div className="connection-chips" aria-live="polite">
+              <span className={`connection-chip ${backendHealth?.persistent ? 'connected' : 'attention'}`}>
+                <span className={`pulse-indicator ${backendHealth?.persistent ? 'active' : ''}`} />
+                {loading ? 'Connecting to backend…' : backendHealth?.persistent ? 'MongoDB · persistent storage' : backendHealth?.storage_mode === 'mongomock' ? 'Demo memory · not persistent' : 'Backend unavailable'}
+              </span>
+              <span className="connection-chip">{isWsConnected ? 'Live telemetry' : 'Polling telemetry'}</span>
+              {backendHealth?.operator_auth_required && <button className="btn btn-secondary btn-sm" onClick={() => setOperatorAccessOpen(true)}>Operator access</button>}
+              {lastUpdated && <span className="sync-time">Updated {lastUpdated.toLocaleTimeString()}</span>}
+            </div>
+          </div>
+          <div className="network-orbit" aria-hidden="true">
+            <div className="orbit-ring ring-one" /><div className="orbit-ring ring-two" />
+            <div className="orbit-sweep" /><div className="orbit-core"><Activity size={38} /></div>
+            {[0, 1, 2, 3, 4, 5].map(i => <span key={i} className={`orbit-node node-${i}`} />)}
+            <span className="orbit-caption">{hospitals.length || '—'} FACILITIES / ONE NETWORK</span>
+          </div>
+        </section>
+        {connectionError && <div className="connection-banner" role="status"><ShieldAlert size={18} /><span>{connectionError}</span><button className="btn btn-secondary btn-sm" onClick={fetchAllData}>Retry</button></div>}
+        {loading && <div className="loading-state" role="status"><span className="loading-bar" />Loading your healthcare network…</div>}
+        <div key={currentTab} className="view-transition">
+        <Suspense fallback={<div className="loading-state" role="status">Loading this view…</div>}>
         {currentTab === 'overview' && (
           <div>
             <MetricCards analytics={analytics} />
@@ -315,8 +382,12 @@ export const App: React.FC = () => {
             onApprove={handleApproveRec}
             onCancel={handleCancelRec}
             onRefresh={async () => {
-              await generateRecommendations();
-              await fetchAllData();
+              try {
+                await generateRecommendations();
+                await fetchAllData();
+              } catch (err: any) {
+                showToast(`Could not refresh recommendations: ${err.message}`, 'alert');
+              }
             }}
           />
         )}
@@ -332,7 +403,34 @@ export const App: React.FC = () => {
         {currentTab === 'ledger' && <LedgerView events={events} />}
 
         {currentTab === 'evaluation' && <EvaluationView evaluation={analytics?.evaluation} />}
+        </Suspense>
+        </div>
       </main>
+
+      {operatorAccessOpen && (
+        <div className="operator-overlay">
+          <section className="glass-panel operator-dialog" role="dialog" aria-modal="true" aria-labelledby="operator-title">
+            <h2 id="operator-title">Operator access</h2>
+            <p>Enter the operator token from your Render service’s secret settings to control this simulation. Access lasts for this browser tab.</p>
+            <form onSubmit={event => {
+              event.preventDefault();
+              if (operatorToken.trim()) sessionStorage.setItem('medisync_operator_token', operatorToken.trim());
+              else sessionStorage.removeItem('medisync_operator_token');
+              setOperatorToken('');
+              setOperatorAccessOpen(false);
+              showToast('Operator access updated. Try your action again.', 'info');
+            }}>
+              <label htmlFor="operator-token">Operator token</label>
+              <input id="operator-token" type="password" autoComplete="off" autoFocus value={operatorToken} onChange={event => setOperatorToken(event.target.value)} />
+              <div className="operator-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => { setOperatorToken(''); setOperatorAccessOpen(false); }}>Cancel</button>
+                <button type="button" className="btn btn-secondary" onClick={() => { sessionStorage.removeItem('medisync_operator_token'); setOperatorToken(''); setOperatorAccessOpen(false); }}>Clear access</button>
+                <button type="submit" className="btn btn-primary">Save access</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
 
       {/* Emergency Surge Modal */}
       <EmergencyModal
@@ -341,6 +439,43 @@ export const App: React.FC = () => {
         hospitals={hospitals}
         onTriggerSurge={handleTriggerSurge}
       />
+
+      {/* Footer */}
+      <footer
+        style={{
+          marginTop: '2rem',
+          padding: '1.5rem 2rem',
+          borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '1rem',
+          color: '#64748b',
+          fontSize: '0.75rem',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <Activity size={14} color="#06b6d4" />
+          <span style={{ color: '#94a3b8', fontWeight: 600 }}>MediSync AI</span>
+          <span>— Intelligent Cross-Hospital Resource Rebalancing System</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <span
+            style={{
+              padding: '0.2rem 0.5rem',
+              borderRadius: '4px',
+              background: 'rgba(139, 92, 246, 0.1)',
+              color: '#c084fc',
+              fontSize: '0.7rem',
+              fontWeight: 600,
+            }}
+          >
+            HACK NEXUS | HN-AI-05
+          </span>
+          <span>React • FastAPI • MongoDB • Gemini AI • sklearn</span>
+        </div>
+      </footer>
     </div>
   );
 };

@@ -3,12 +3,9 @@ import { Transfer } from '../types';
 import {
   Truck,
   CheckCircle2,
-  Clock,
   ArrowRight,
   Send,
   PackageCheck,
-  ShieldAlert,
-  Layers,
 } from 'lucide-react';
 
 interface TransfersViewProps {

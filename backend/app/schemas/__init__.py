@@ -72,8 +72,10 @@ class TransferRecommendation(BaseModel):
     estimated_transport_minutes: float
     required_arrival_time: Optional[datetime] = None
     priority: int = 1  # 1 = highest
+    urgency: str = "high"  # critical, high, medium, routine
+    score: float = 90.0
     explanation: str = ""
-    status: str = "proposed"  # proposed, approved, cancelled
+    status: str = "proposed"  # proposed, approved, cancelled, in_transit, completed
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -84,6 +86,7 @@ class RecommendationResponse(TransferRecommendation):
     destination_current_stock: float = 0.0
     destination_hours_to_shortage: Optional[float] = None
     safety_check_passed: bool = True
+    safety_buffer_ratio: float = 2.0
 
 
 # ─── Transfers ──────────────────────────────────────────────────────────
@@ -94,6 +97,7 @@ class Transfer(BaseModel):
     destination_hospital_id: str
     quantity: int
     status: str = "approved"  # approved, in_transit, completed, cancelled
+    estimated_transport_minutes: float = 20.0
     approved_at: Optional[datetime] = None
     dispatched_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
@@ -104,13 +108,17 @@ class TransferResponse(Transfer):
     destination_hospital_name: str = ""
 
 
-# ─── Simulation Events ─────────────────────────────────────────────────
+# ─── Simulation Events & Immutable Ledger ──────────────────────────────
 class SimulationEvent(BaseModel):
     event_id: str = Field(default_factory=gen_id)
     simulation_run_id: str = "default"
     hospital_id: str = ""
-    event_type: str  # start, pause, resume, reset, emergency_surge, return_normal
+    hospital_name: str = ""
+    event_type: str  # emergency_surge, threshold_breach, recommendation_generated, transfer_approved, transfer_dispatched, transfer_completed, start, pause, resume, reset
+    details: Dict[str, Any] = Field(default_factory=dict)
     parameter_changes: Dict[str, Any] = Field(default_factory=dict)
+    previous_hash: str = "00000000000000000000000000000000"
+    ledger_hash: str = ""
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -154,6 +162,10 @@ class AnalyticsResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     mongodb: bool = False
+    storage_mode: str = "unavailable"
+    persistent: bool = False
+    backend_instance: str = ""
+    operator_auth_required: bool = False
     simulation_running: bool = False
     version: str = "1.0.0"
     timestamp: datetime = Field(default_factory=datetime.utcnow)
