@@ -1,0 +1,32 @@
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Environment variables
+.env
+!.env.example
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
